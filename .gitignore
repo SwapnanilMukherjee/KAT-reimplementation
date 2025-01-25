@@ -2,4 +2,5 @@
 *.dpr
 **/.ipynb_checkpoints/
 **/__pycache__/
+**/test_model/
 *.pkl
