@@ -398,7 +398,7 @@ def load_cric_data(data_root=None, split_type='train',
     else:
         filename = f'{split_type}_questions.json'
     
-    json_path = os.path.join(data_root, filename)
+    json_path = os.path.join('/storage/swapnanil.mukherjee/cric/CRIC Dataset/', filename)
     with open(json_path, 'r') as f:
         questions_data = json.load(f)
     
@@ -418,7 +418,7 @@ def load_cric_data(data_root=None, split_type='train',
         
         example['id'] = str(item['question_id'])
         example['question'] = item['question']
-        example['target'] = item['answer']  # CRIC has single answer
+        example['answers'] = item['answer']  # CRIC has single answer
         
         # Get entities for this image
         if img_id in wiki_entities:
