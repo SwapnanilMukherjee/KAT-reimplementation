@@ -387,3 +387,136 @@ def load_esnlive_data(data_root=None, split_type='train',
         examples.append(example)
 
     return examples
+
+def load_cric_data(data_root=None, split_type='train',
+                   global_rank=-1, world_size=-1):
+    assert data_root
+    
+    # Load CRIC questions
+    if split_type == 'test':
+        filename = 'test_v1_questions.json'
+    else:
+        filename = f'{split_type}_questions.json'
+    
+    json_path = os.path.join(data_root, filename)
+    with open(json_path, 'r') as f:
+        questions_data = json.load(f)
+    
+    # Load entity data
+    entity_path = os.path.join(data_root, f'wikidata_cric_topentities.pkl')
+    with open(entity_path, 'rb') as f:
+        wiki_entities = pickle.load(f)
+    
+    examples = []
+    for idx, item in enumerate(questions_data):
+        if global_rank > -1 and not idx % world_size == global_rank:
+            continue
+            
+        example = {}
+        # Create image name by adding .jpg to image_id
+        img_id = f"{item['image_id']}.jpg"
+        
+        example['id'] = str(item['question_id'])
+        example['question'] = item['question']
+        example['target'] = item['answer']  # CRIC has single answer
+        
+        # Get entities for this image
+        if img_id in wiki_entities:
+            example['entities'] = wiki_entities[img_id][0]
+        else:
+            print(f"Warning: No entities found for image {img_id}")
+            example['entities'] = []
+        
+        examples.append(example)
+    
+    return examples
+
+class CRICDataset(torch.utils.data.Dataset):
+    def __init__(self,
+                 data,
+                 n_context=None,
+                 question_prefix='question:',
+                 title_prefix='title:',
+                 passage_prefix='context:'):
+        self.data = data
+        self.n_context = n_context
+        self.question_prefix = question_prefix
+        self.title_prefix = title_prefix
+        self.passage_prefix = passage_prefix
+
+    def __len__(self):
+        return len(self.data)
+
+    def get_target(self, example):
+        if 'target' in example:
+            target = example['target']
+            return target + ' </s>'
+        else:
+            return None
+
+    def __getitem__(self, index):
+        example = self.data[index]
+        question = self.question_prefix + " " + example['question']
+        target = self.get_target(example)
+
+        if 'entities' in example and self.n_context is not None:
+            f = self.title_prefix + " {} " + self.passage_prefix + " {}"
+            entities = example['entities'][:self.n_context]
+
+            # Pad entities if less than n_context
+            while len(entities) < self.n_context:
+                entities = entities + entities[:(self.n_context-len(entities))]
+            try:
+                passages = [f.format(c[0], '{} is a {}'.format(c[0],c[1])) for c in entities]
+            except Exception as e:
+                print(example)
+                print(entities)
+                assert False
+        else:
+            passages = None
+
+        return {
+            'id': example['id'],
+            'index': index,
+            'question': question,
+            'target': target,
+            'passages': passages,
+        }
+
+    def get_example(self, index):
+        return self.data[index]
+
+class CRICCollator(object):
+    def __init__(self, text_maxlength, tokenizer, answer_maxlength=20):
+        self.tokenizer = tokenizer
+        self.text_maxlength = text_maxlength
+        self.answer_maxlength = answer_maxlength
+
+    def __call__(self, batch):
+        assert(batch[0]['target'] != None)
+        index = torch.tensor([ex['index'] for ex in batch])
+        target = [ex['target'] for ex in batch]
+        target = self.tokenizer.batch_encode_plus(
+            target,
+            max_length=self.answer_maxlength if self.answer_maxlength > 0 else None,
+            pad_to_max_length=True,
+            return_tensors='pt',
+            truncation=True if self.answer_maxlength > 0 else False,
+        )
+        target_ids = target["input_ids"]
+        target_mask = target["attention_mask"].bool()
+        target_ids = target_ids.masked_fill(~target_mask, -100)
+
+        def append_question(example):
+            if example['passages'] is None:
+                return [example['question']]
+            text_passage = [example['question'] + " " + t for t in example['passages']]
+            return text_passage
+
+        text_passages = [append_question(example) for example in batch]
+        passage_ids, passage_masks = encode_passages(text_passages,
+                                                   self.tokenizer,
+                                                   self.text_maxlength)
+
+        img_ids = [example['id'] for example in batch]
+        return (img_ids, index, target_ids, target_mask, passage_ids, passage_masks)

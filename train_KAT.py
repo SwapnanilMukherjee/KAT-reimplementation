@@ -40,6 +40,8 @@ def train(model, model_ema, optimizer, scheduler, step, train_dataset, eval_data
         num_workers=32,
         collate_fn=collator
     )
+    
+    scaler = torch.amp.GradScaler('cuda')
 
     loss, curr_loss = 0.0, 0.0
     epoch = 1
@@ -50,17 +52,21 @@ def train(model, model_ema, optimizer, scheduler, step, train_dataset, eval_data
             step += 1
             (_, idx, labels, _, context_ids, context_mask) = batch
 
-            train_loss = model(
-                input_ids=context_ids.cuda(),
-                attention_mask=context_mask.cuda(),
-                labels=labels.cuda()
-            )[0]
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                train_loss = model(
+                    input_ids=context_ids.cuda(),
+                    attention_mask=context_mask.cuda(),
+                    labels=labels.cuda()
+                )[0]
 
-            train_loss.backward()
+            # train_loss.backward()
+            scaler.scale(train_loss).backward()
 
             if step % opt.accumulation_steps == 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), opt.clip)
-                optimizer.step()
+                # optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
                 scheduler.step()
                 model.zero_grad()
 
