@@ -451,6 +451,8 @@ class CRICDataset(torch.utils.data.Dataset):
         if 'target' in example:
             target = example['target']
             return target + ' </s>'
+        elif 'answers' in example:
+            return example['answers'] + ' </s>'
         else:
             return None
 
