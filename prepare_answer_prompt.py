@@ -8,7 +8,7 @@ data_dir = '/mnt/storage/swapnanil_mukherjee/e-snli-ve/'
 split = 'test'
 annt_file = 'esnlive_{}_w_captions.csv'.format(split)
 annt_df = pd.read_csv(os.path.join(data_dir, annt_file))
-sample_df = annt_df.sample(100)
+sample_df = annt_df.iloc[:10000, :]
 
 with open("wikidata_esnlive_topentities.pkl", 'rb') as f:
     top_entities = pickle.load(f)
